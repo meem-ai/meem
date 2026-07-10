@@ -1,0 +1,56 @@
+{
+  "name": "meem-ai",
+  "version": "0.1.0",
+  "description": "Human-like memory for AI agents, implemented as an OpenCode plugin",
+  "author": {
+    "name": "Linus Schlumberger",
+    "email": "l@mll.one"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meem-ai/meem"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/plugin.js",
+  "types": "./dist/plugin.d.ts",
+  "bin": {
+    "meem": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/plugin.js",
+      "types": "./dist/plugin.d.ts"
+    },
+    "./core": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --write .",
+    "test": "npm run build && node --test tests/*.test.js",
+    "start": "npm run build && node ./dist/cli.js"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.4.0",
+    "@opencode-ai/sdk": ">=1.4.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.17.14",
+    "@opencode-ai/sdk": "^1.17.14",
+    "@types/node": "^22.13.9",
+    "prettier": "^3.6.2",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.2.0",
+    "@lancedb/lancedb": "0.31.0",
+    "bun-webgpu": "0.1.7"
+  }
+}
