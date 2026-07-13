@@ -121,6 +121,7 @@ export interface AutomaticMemoryInsertion {
   sessionID: string
   messageID: string
   memoryIds: string[]
+  snapshot?: string
   createdAt: string
 }
 
@@ -148,6 +149,11 @@ interface AutomaticInsertionRow {
   createdAt: string
 }
 
+interface AutomaticInsertionPayload {
+  ids: string[]
+  s?: string
+}
+
 const sqlString = (value: string): string => `'${value.replaceAll("'", "''")}'`
 
 const sqlStringList = (values: readonly string[]): string => values.map(sqlString).join(", ")
@@ -163,12 +169,37 @@ const memoryFromRow = (row: MemoryRow): Memory => ({
   updatedAt: row.updatedAt,
 })
 
-const insertionFromRow = (row: AutomaticInsertionRow): AutomaticMemoryInsertion => ({
-  sessionID: row.sessionID,
-  messageID: row.messageID,
-  memoryIds: JSON.parse(row.memoryIdsJson) as string[],
-  createdAt: row.createdAt,
-})
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string")
+
+const automaticInsertionPayload = (memoryIds: string[], snapshot?: string): string =>
+  snapshot === undefined ? JSON.stringify(memoryIds) : JSON.stringify({ ids: memoryIds, s: snapshot })
+
+const parseAutomaticInsertionPayload = (json: string): AutomaticInsertionPayload => {
+  const payload = JSON.parse(json) as unknown
+  if (isStringArray(payload)) {
+    return { ids: payload }
+  }
+  if (typeof payload === "object" && payload !== null && "ids" in payload) {
+    const ids = (payload as { ids: unknown }).ids
+    const snapshot = (payload as { s?: unknown }).s
+    if (isStringArray(ids)) {
+      return typeof snapshot === "string" ? { ids, s: snapshot } : { ids }
+    }
+  }
+  return { ids: [] }
+}
+
+const insertionFromRow = (row: AutomaticInsertionRow): AutomaticMemoryInsertion => {
+  const payload = parseAutomaticInsertionPayload(row.memoryIdsJson)
+  return {
+    sessionID: row.sessionID,
+    messageID: row.messageID,
+    memoryIds: payload.ids,
+    snapshot: payload.s,
+    createdAt: row.createdAt,
+  }
+}
 
 export interface EmbeddingConfig {
   baseUrl?: string
@@ -636,10 +667,17 @@ export class LanceMemoryStore {
       return []
     }
     const insertions = rows.map(insertionFromRow)
-    const memoryIds = [...new Set(insertions.flatMap((insertion) => insertion.memoryIds))]
+    const snapshotContexts = insertions
+      .filter((insertion) => insertion.snapshot !== undefined)
+      .map((insertion) => ({ insertion, memories: [] }))
+    const legacyInsertions = insertions.filter((insertion) => insertion.snapshot === undefined)
+    const memoryIds = [...new Set(legacyInsertions.flatMap((insertion) => insertion.memoryIds))]
+    if (memoryIds.length === 0) {
+      return snapshotContexts
+    }
     const memoryTable = await this.#memoriesIfExists()
     if (!memoryTable) {
-      return []
+      return snapshotContexts
     }
     const memories = (await memoryTable
       .query()
@@ -652,7 +690,7 @@ export class LanceMemoryStore {
         insertion,
         memories: insertion.memoryIds.map((id) => memoryById.get(id)).filter((memory): memory is Memory => !!memory),
       }))
-      .filter(({ memories }) => memories.length > 0)
+      .filter(({ insertion, memories }) => insertion.snapshot !== undefined || memories.length > 0)
   }
 
   public async rememberAutomaticInsertion(
@@ -660,12 +698,15 @@ export class LanceMemoryStore {
     messageID: string,
     memoryIds: string[],
     createdAt: string,
+    snapshot?: string,
   ): Promise<void> {
     await this.#write(async () => {
       const table = await this.#insertions()
       const key = `${sessionID}:${messageID}`
       await table.delete(`key = ${sqlString(key)}`)
-      await table.add([{ key, sessionID, messageID, memoryIdsJson: JSON.stringify(memoryIds), createdAt }])
+      await table.add([
+        { key, sessionID, messageID, memoryIdsJson: automaticInsertionPayload(memoryIds, snapshot), createdAt },
+      ])
     })
   }
 
@@ -923,8 +964,19 @@ export class MemoryEngine {
     return this.#store.memoriesByIds(ids)
   }
 
-  public async rememberAutomaticInsertion(sessionID: string, messageID: string, memoryIds: string[]): Promise<void> {
-    await this.#store.rememberAutomaticInsertion(sessionID, messageID, memoryIds, new Date(this.#now()).toISOString())
+  public async rememberAutomaticInsertion(
+    sessionID: string,
+    messageID: string,
+    memoryIds: string[],
+    snapshot?: string,
+  ): Promise<void> {
+    await this.#store.rememberAutomaticInsertion(
+      sessionID,
+      messageID,
+      memoryIds,
+      new Date(this.#now()).toISOString(),
+      snapshot,
+    )
   }
 
   public async close(): Promise<void> {
@@ -1222,7 +1274,7 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
         return
       }
       const hasMemories = await engine.hasMemories()
-      const contexts = hasMemories ? await engine.automaticContexts(sessionID, messageIds(messages)) : []
+      const contexts = await engine.automaticContexts(sessionID, messageIds(messages))
       for (const context of contexts) {
         const anchorIndex = output.messages.findIndex(({ info }) => info.id === context.insertion.messageID)
         if (anchorIndex === -1) {
@@ -1237,7 +1289,7 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
           anchorIndex,
           anchor,
           context.insertion.memoryIds,
-          formatMemories(context.memories),
+          context.insertion.snapshot ?? formatMemories(context.memories),
         )
       }
       let compactionContextInserted = false
@@ -1259,13 +1311,14 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
           const combinedMemories = stableMemories([...changedMemories, ...relevantResults.map(({ memory }) => memory)])
           if (combinedMemories.length > 0) {
             const memoryIds = combinedMemories.map((memory) => memory.id)
-            await engine.rememberAutomaticInsertion(sessionID, summary.info.id, memoryIds)
+            const content = formatMemories(combinedMemories)
+            await engine.rememberAutomaticInsertion(sessionID, summary.info.id, memoryIds, content)
             compactionContextInserted = insertAutomaticMemoryMessage(
               output.messages,
               summaryIndex,
               summary,
               memoryIds,
-              formatMemories(combinedMemories),
+              content,
             )
           }
           pendingCompactionSessions.delete(sessionID)
@@ -1308,12 +1361,13 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
         return
       }
       const memoryIds = results.map(({ memory }) => memory.id)
-      await engine.rememberAutomaticInsertion(sessionID, latestUserMessage.info.id, memoryIds)
+      const content = formatResults(results)
+      await engine.rememberAutomaticInsertion(sessionID, latestUserMessage.info.id, memoryIds, content)
       output.messages.push(
         automaticMemoryMessage(
           latestUserMessage as UserMessageWithParts,
           memoryIdFromContent(memoryIds.join("\n")),
-          formatResults(results),
+          content,
         ) as HookMessage,
       )
     },

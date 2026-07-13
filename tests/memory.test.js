@@ -253,6 +253,55 @@ test("automatic insertion records survive engine reload", async () => {
   }
 })
 
+test("snapshot automatic insertion survives reload after referenced short-term memory expires", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  const path = join(directory, "memory.lancedb")
+  let now = Date.UTC(2026, 0, 1)
+  const policy = { shortTermMilliseconds: 1_000 }
+  const first = new MemoryEngine(new LanceMemoryStore(path), new FakeEmbedder(), policy, () => now)
+
+  try {
+    const remembered = await first.remember({ content: "The user likes ice cream." })
+    const snapshot = `[meem:${remembered.memory.id}] The user liked ice cream at insertion time.`
+    await first.rememberAutomaticInsertion("session-1", "message-1", [remembered.memory.id], snapshot)
+    await first.close()
+
+    now += 2_000
+    const second = new MemoryEngine(new LanceMemoryStore(path), new FakeEmbedder(), policy, () => now)
+    const contexts = await second.automaticContexts("session-1", new Set(["message-1"]))
+
+    assert.equal(contexts.length, 1)
+    assert.deepEqual(contexts[0]?.insertion.memoryIds, [remembered.memory.id])
+    assert.equal(contexts[0]?.insertion.snapshot, snapshot)
+    assert.deepEqual(contexts[0]?.memories, [])
+    await second.close()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("snapshot automatic insertion loads when the memory table is absent", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  const path = join(directory, "memory.lancedb")
+  const first = new MemoryEngine(new LanceMemoryStore(path), new FakeEmbedder())
+
+  try {
+    await first.rememberAutomaticInsertion("session-1", "message-1", ["memory-1"], "[meem:memory-1] Archived fact")
+    await first.close()
+
+    const second = new MemoryEngine(new LanceMemoryStore(path), new FakeEmbedder())
+    const contexts = await second.automaticContexts("session-1", new Set(["message-1"]))
+
+    assert.equal(contexts.length, 1)
+    assert.deepEqual(contexts[0]?.insertion.memoryIds, ["memory-1"])
+    assert.equal(contexts[0]?.insertion.snapshot, "[meem:memory-1] Archived fact")
+    assert.deepEqual(contexts[0]?.memories, [])
+    await second.close()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("loads memories by ordered IDs and skips missing IDs", async () => {
   await withEngine(async (engine) => {
     const first = await engine.remember({ content: "First ordered memory" })
