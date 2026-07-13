@@ -44,7 +44,9 @@ test("stores and deduplicates semantic memories", async () => {
     const duplicate = await engine.remember({ content: "User likes short answers" })
 
     assert.equal(first.created, true)
+    assert.equal(first.status, "created")
     assert.equal(duplicate.created, false)
+    assert.equal(duplicate.status, "duplicate")
     assert.equal(duplicate.memory.id, first.memory.id)
     assert.equal((await engine.recall("concise replies", "search", 5)).length, 1)
   })
@@ -68,6 +70,34 @@ test("default retention is one day for short-term and seven days for long-term",
     } else {
       process.env.HOME = previousHome
     }
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("confirmed semantic duplicate refreshes existing memory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  let now = Date.UTC(2026, 0, 1)
+  const engine = new MemoryEngine(
+    new LanceMemoryStore(join(directory, "memory.lancedb")),
+    new FakeEmbedder(),
+    {},
+    () => now,
+  )
+
+  try {
+    const first = await engine.remember({ content: "User prefers concise replies" })
+    now += 1_000
+    const duplicate = await engine.remember({ content: "User likes short answers" })
+    assert.equal(duplicate.status, "duplicate")
+    assert.equal(duplicate.memory.updatedAt, first.memory.updatedAt)
+
+    const confirmed = await engine.remember({ content: "User likes short answers", confirm: true })
+    assert.equal(confirmed.status, "confirmed_duplicate")
+    assert.equal(confirmed.memory.id, first.memory.id)
+    assert.equal(confirmed.memory.updatedAt, new Date(now).toISOString())
+    assert.equal((await engine.recall("concise replies", "search", 5)).length, 1)
+  } finally {
+    await engine.close()
     await rm(directory, { recursive: true, force: true })
   }
 })

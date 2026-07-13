@@ -83,6 +83,8 @@ export const EMPTY_SEARCH_RESULT = "No new matching memories found. Memories alr
 export const EMPTY_AUTOMATIC_QUERY = ""
 export const WRITE_RESULT_PREFIX = "Remembered"
 export const DEDUPLICATED_RESULT_PREFIX = "Already remembered"
+export const DUPLICATE_REWRITE_CONFIRM_PREFIX = "Near-duplicate memory already exists"
+export const CONFIRMED_DUPLICATE_RESULT_PREFIX = "Confirmed existing memory"
 export const SEARCH_RESULT_HEADING = "Matching memories:"
 export const CONFIG_ERROR_PREFIX = "Invalid meem configuration"
 export const REMOTE_MODEL_REQUIRED_ERROR = "embedding.model is required when embedding.baseUrl is set"
@@ -95,6 +97,8 @@ export const TOOL_WRITE_DESCRIPTION =
 export const TOOL_SEARCH_DESCRIPTION =
   "Search memory for relevant prior facts, preferences, decisions, and lessons. Use this proactively before answering whenever remembered context might help, especially for preferences, prior decisions, recurring tasks, project context, or anything the user may expect you to remember."
 export const TOOL_WRITE_CONTENT_DESCRIPTION = "One self-contained memory, ideally a single short sentence."
+export const TOOL_WRITE_CONFIRM_DESCRIPTION =
+  "Set to true only after intentionally confirming a near-duplicate memory should refresh the existing memory instead of creating a distinct one."
 export const TOOL_SEARCH_QUERY_DESCRIPTION = "A focused semantic query describing what would help now."
 export const TOOL_SEARCH_LIMIT_DESCRIPTION = "Maximum memories to return."
 
@@ -242,11 +246,16 @@ export interface RecallResult {
 export interface RememberInput {
   content: string
   tier?: MemoryTier
+  confirm?: boolean
 }
+
+export type RememberStatus = "created" | "duplicate" | "confirmed_duplicate"
 
 export interface RememberResult {
   memory: Memory
   created: boolean
+  status: RememberStatus
+  similarity?: number
 }
 
 const isMissingTableError = (error: unknown): boolean => {
@@ -826,9 +835,17 @@ export class MemoryEngine {
     await this.#pruneExpired()
     const duplicate = await this.#store.nearestMemory(embedding)
     if (duplicate && duplicate.similarity >= this.#policy.deduplicationSimilarityThreshold) {
+      if (!input.confirm) {
+        return { memory: duplicate.memory, created: false, status: "duplicate", similarity: duplicate.similarity }
+      }
       duplicate.memory.updatedAt = new Date(this.#now()).toISOString()
       this.#store.queueUpdateMemory(duplicate.memory)
-      return { memory: duplicate.memory, created: false }
+      return {
+        memory: duplicate.memory,
+        created: false,
+        status: "confirmed_duplicate",
+        similarity: duplicate.similarity,
+      }
     }
 
     const now = new Date(this.#now()).toISOString()
@@ -843,7 +860,7 @@ export class MemoryEngine {
       updatedAt: now,
     }
     await this.#store.addMemory(memory)
-    return { memory, created: true }
+    return { memory, created: true, status: "created" }
   }
 
   public async hasMemories(): Promise<boolean> {
@@ -1030,10 +1047,15 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
         description: TOOL_WRITE_DESCRIPTION,
         args: {
           content: tool.schema.string().describe(TOOL_WRITE_CONTENT_DESCRIPTION),
+          confirm: tool.schema.boolean().optional().describe(TOOL_WRITE_CONFIRM_DESCRIPTION),
         },
         execute: async (args) => {
           const result = await engine.remember(args)
-          const prefix = result.created ? WRITE_RESULT_PREFIX : DEDUPLICATED_RESULT_PREFIX
+          if (result.status === "duplicate") {
+            return `${DUPLICATE_REWRITE_CONFIRM_PREFIX} as ${memoryMarker(result.memory.id)} in ${result.memory.tier}-term memory. Rewrite as a distinct memory, or rerun ${MEMORY_WRITE_TOOL_NAME} with confirm:true to refresh the existing memory.`
+          }
+          const prefix =
+            result.status === "confirmed_duplicate" ? CONFIRMED_DUPLICATE_RESULT_PREFIX : WRITE_RESULT_PREFIX
           return `${prefix} ${memoryMarker(result.memory.id)} in ${result.memory.tier}-term memory.`
         },
       }),
