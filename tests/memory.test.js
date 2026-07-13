@@ -248,6 +248,26 @@ test("automatic insertion records survive engine reload", async () => {
   }
 })
 
+test("store clear removes memories and automatic insertion records", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  const path = join(directory, "memory.lancedb")
+  const store = new LanceMemoryStore(path)
+  const engine = new MemoryEngine(store, new FakeEmbedder())
+
+  try {
+    const remembered = await engine.remember({ content: "The user likes ice cream." })
+    await engine.rememberAutomaticInsertion("session-1", "message-1", [remembered.memory.id])
+
+    await store.clear()
+
+    assert.equal(await engine.hasMemories(), false)
+    assert.deepEqual(await engine.automaticContexts("session-1", new Set(["message-1"])), [])
+  } finally {
+    await engine.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("custom recall and promotion policy changes memory behavior", async () => {
   const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
   const engine = new MemoryEngine(new LanceMemoryStore(join(directory, "memory.lancedb")), new FakeEmbedder(), {

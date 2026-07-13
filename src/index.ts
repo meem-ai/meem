@@ -651,6 +651,30 @@ export class LanceMemoryStore {
     })
   }
 
+  public async clear(): Promise<void> {
+    await this.#write(async () => {
+      const db = await this.#db()
+      const tables = await Promise.allSettled([this.#memoryTable, this.#insertionTable])
+      for (const result of tables) {
+        if (result.status === "fulfilled") {
+          result.value?.close()
+        }
+      }
+      this.#memoryTable = undefined
+      this.#insertionTable = undefined
+
+      for (const tableName of [MEMORY_TABLE_NAME, AUTOMATIC_INSERTION_TABLE_NAME]) {
+        try {
+          await db.dropTable(tableName)
+        } catch (error: unknown) {
+          if (!isMissingTableError(error)) {
+            throw error
+          }
+        }
+      }
+    })
+  }
+
   public async close(): Promise<void> {
     await this.#writeQueue
     const tables = await Promise.allSettled([this.#memoryTable, this.#insertionTable])
