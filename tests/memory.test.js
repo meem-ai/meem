@@ -4,7 +4,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { LanceMemoryStore, LONG_TERM_PROMOTION_SCORE, MemoryEngine, SEARCH_USE_WEIGHT } from "../dist/index.js"
+import {
+  DEFAULT_LONG_TERM_RETENTION_DAYS,
+  DEFAULT_SHORT_TERM_RETENTION_DAYS,
+  LanceMemoryStore,
+  LONG_TERM_PROMOTION_SCORE,
+  MemoryEngine,
+  resolveConfig,
+  SEARCH_USE_WEIGHT,
+} from "../dist/index.js"
 
 class FakeEmbedder {
   async embed(text) {
@@ -40,6 +48,28 @@ test("stores and deduplicates semantic memories", async () => {
     assert.equal(duplicate.memory.id, first.memory.id)
     assert.equal((await engine.recall("concise replies", "search", 5)).length, 1)
   })
+})
+
+test("default retention is one day for short-term and seven days for long-term", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  const previousHome = process.env.HOME
+
+  try {
+    process.env.HOME = directory
+    const config = await resolveConfig({ storagePath: join(directory, "memory.lancedb") })
+
+    assert.equal(DEFAULT_SHORT_TERM_RETENTION_DAYS, 1)
+    assert.equal(DEFAULT_LONG_TERM_RETENTION_DAYS, 7)
+    assert.equal(config.shortTermRetentionDays, 1)
+    assert.equal(config.longTermRetentionDays, 7)
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME
+    } else {
+      process.env.HOME = previousHome
+    }
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test("search reinforces and promotes memory more than automatic recall", async () => {
