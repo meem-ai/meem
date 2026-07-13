@@ -525,6 +525,24 @@ export class LanceMemoryStore {
     return rows.map((row) => ({ memory: memoryFromRow(row), similarity: 1 - (row._distance ?? 1) }))
   }
 
+  public async memoriesByIds(ids: readonly string[]): Promise<Memory[]> {
+    if (ids.length === 0) {
+      return []
+    }
+    const table = await this.#memoriesIfExists()
+    if (!table) {
+      return []
+    }
+    const queryIds = [...new Set(ids)]
+    const rows = (await table
+      .query()
+      .where(`id IN (${sqlStringList(queryIds)})`)
+      .select(["id", "content", "vector", "tier", "automaticUses", "searchUses", "createdAt", "updatedAt"])
+      .toArray()) as MemoryRow[]
+    const memoryById = new Map(rows.map((row) => [row.id, memoryFromRow(row)]))
+    return ids.map((id) => memoryById.get(id)).filter((memory): memory is Memory => !!memory)
+  }
+
   public async nearestMemory(embedding: number): Promise<RecallResult | undefined>
   public async nearestMemory(embedding: number[]): Promise<RecallResult | undefined>
   public async nearestMemory(embedding: number | number[]): Promise<RecallResult | undefined> {
@@ -900,6 +918,11 @@ export class MemoryEngine {
     return this.#store.automaticContexts(sessionID, visibleMessageIds)
   }
 
+  public async memoriesByIds(ids: readonly string[]): Promise<Memory[]> {
+    await this.#pruneExpired()
+    return this.#store.memoriesByIds(ids)
+  }
+
   public async rememberAutomaticInsertion(sessionID: string, messageID: string, memoryIds: string[]): Promise<void> {
     await this.#store.rememberAutomaticInsertion(sessionID, messageID, memoryIds, new Date(this.#now()).toISOString())
   }
@@ -988,8 +1011,19 @@ type UserMessageWithParts = {
   parts: unknown[]
 }
 
+type MemoryAnchorWithParts = {
+  info: {
+    id: string
+    sessionID: string
+    role: string
+    summary?: unknown
+    time: { created: number }
+  } & Record<string, unknown>
+  parts: unknown[]
+}
+
 type PluginMessage = {
-  info: UserMessageWithParts["info"]
+  info: MemoryAnchorWithParts["info"]
   parts: {
     id: string
     sessionID: string
@@ -1004,6 +1038,30 @@ const messageIds = (messages: { info: { id: string } }[]): Set<string> => new Se
 
 const isUserMessage = (message: { info: { role: string } }): message is UserMessageWithParts =>
   message.info.role === "user"
+
+export const isAutomaticMemoryAnchor = (message: {
+  info: { id?: string; sessionID?: string; role?: string; summary?: unknown; time?: { created?: number } }
+  parts?: unknown[]
+}): message is MemoryAnchorWithParts =>
+  typeof message.info.id === "string" &&
+  typeof message.info.sessionID === "string" &&
+  typeof message.info.time?.created === "number" &&
+  (message.info.role === "user" || (message.info.role === "assistant" && message.info.summary === true))
+
+export const compactionSummaryText = (message: {
+  info: { role: string; summary?: unknown }
+  parts: { type: string; text?: string; synthetic?: boolean }[]
+}): string | undefined => {
+  if (message.info.role !== "assistant" || message.info.summary !== true) {
+    return undefined
+  }
+  const text = message.parts
+    .filter((part) => part.type === "text" && !part.synthetic)
+    .map((part) => part.text ?? "")
+    .join("\n")
+    .trim()
+  return text.length > 0 ? text : undefined
+}
 
 const insertedMemoryIds = (contexts: AutomaticMemoryContext[]): Set<string> =>
   new Set(contexts.flatMap(({ insertion }) => insertion.memoryIds))
@@ -1022,12 +1080,17 @@ const memoryIdsInText = (text: string): Set<string> => {
 const formatMemories = (memories: Memory[]): string =>
   memories.map((memory) => `${memoryMarker(memory.id)} ${memory.content}`).join("\n")
 
-const automaticMemoryMessage = (anchor: UserMessageWithParts, memoryIds: string, content: string): PluginMessage => {
+export const automaticMemoryMessage = (
+  anchor: MemoryAnchorWithParts,
+  memoryIds: string,
+  content: string,
+): PluginMessage => {
   const messageID = `msg_meem_memory_${anchor.info.id}_${memoryIds}`
   return {
     info: {
       ...anchor.info,
       id: messageID,
+      ...(anchor.info.role === "assistant" ? { summary: false } : {}),
       time: { created: anchor.info.time.created },
     },
     parts: [
@@ -1041,6 +1104,47 @@ const automaticMemoryMessage = (anchor: UserMessageWithParts, memoryIds: string,
       },
     ],
   }
+}
+
+const hasSyntheticMemoryMessage = (messages: { info: { id: string } }[], messageID: string): boolean =>
+  messages.some(({ info }) => info.id === messageID)
+
+const insertAutomaticMemoryMessage = <Message extends { info: { id: string }; parts: unknown[] }>(
+  messages: Message[],
+  anchorIndex: number,
+  anchor: MemoryAnchorWithParts,
+  memoryIds: string[],
+  content: string,
+): boolean => {
+  const message = automaticMemoryMessage(
+    anchor,
+    memoryIdFromContent(memoryIds.join("\n")),
+    content,
+  ) as unknown as Message
+  if (hasSyntheticMemoryMessage(messages, message.info.id)) {
+    return false
+  }
+  messages.splice(anchorIndex + 1, 0, message)
+  return true
+}
+
+const rememberChangedMemory = (idsBySession: Map<string, string[]>, sessionID: string, memoryID: string): void => {
+  const ids = idsBySession.get(sessionID) ?? []
+  if (!ids.includes(memoryID)) {
+    ids.push(memoryID)
+    idsBySession.set(sessionID, ids)
+  }
+}
+
+const stableMemories = (memories: Memory[]): Memory[] => {
+  const seen = new Set<string>()
+  return memories.filter((memory) => {
+    if (seen.has(memory.id)) {
+      return false
+    }
+    seen.add(memory.id)
+    return true
+  })
 }
 
 const createEmbedder = (config: ResolvedMeemConfig): Embedder =>
@@ -1064,6 +1168,8 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
     searchUseWeight: config.searchUseWeight,
   })
   const automaticMessageBySession = new Map<string, string>()
+  const changedMemoryIdsBySession = new Map<string, string[]>()
+  const pendingCompactionSessions = new Set<string>()
 
   return {
     tool: {
@@ -1073,8 +1179,11 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
           content: tool.schema.string().describe(TOOL_WRITE_CONTENT_DESCRIPTION),
           confirm: tool.schema.boolean().optional().describe(TOOL_WRITE_CONFIRM_DESCRIPTION),
         },
-        execute: async (args) => {
+        execute: async (args, context) => {
           const result = await engine.remember(args)
+          if (result.status === "created" || result.status === "confirmed_duplicate") {
+            rememberChangedMemory(changedMemoryIdsBySession, context.sessionID, result.memory.id)
+          }
           if (result.status === "duplicate") {
             return `${DUPLICATE_REWRITE_CONFIRM_PREFIX} as ${memoryMarker(result.memory.id)} in ${result.memory.tier}-term memory. Rewrite as a distinct memory, or rerun ${MEMORY_WRITE_TOOL_NAME} with confirm:true to refresh the existing memory.`
           }
@@ -1108,33 +1217,67 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
     "experimental.chat.messages.transform": async (_input, output) => {
       type HookMessage = (typeof output.messages)[number]
       const messages = output.messages
-      const latestUserMessage = messages.findLast(({ info }) => info.role === "user")
-      if (!latestUserMessage) {
+      const sessionID = messages.find(({ info }) => typeof info.sessionID === "string")?.info.sessionID
+      if (!sessionID) {
         return
       }
-      const sessionID = latestUserMessage.info.sessionID
-      if (!(await engine.hasMemories())) {
-        return
-      }
-      const contexts = await engine.automaticContexts(sessionID, messageIds(messages))
+      const hasMemories = await engine.hasMemories()
+      const contexts = hasMemories ? await engine.automaticContexts(sessionID, messageIds(messages)) : []
       for (const context of contexts) {
         const anchorIndex = output.messages.findIndex(({ info }) => info.id === context.insertion.messageID)
         if (anchorIndex === -1) {
           continue
         }
         const anchor = output.messages[anchorIndex]
-        if (!anchor || !isUserMessage(anchor)) {
+        if (!anchor || !isAutomaticMemoryAnchor(anchor)) {
           continue
         }
-        output.messages.splice(
-          anchorIndex + 1,
-          0,
-          automaticMemoryMessage(
-            anchor,
-            memoryIdFromContent(context.insertion.memoryIds.join("\n")),
-            formatMemories(context.memories),
-          ) as HookMessage,
+        insertAutomaticMemoryMessage(
+          output.messages,
+          anchorIndex,
+          anchor,
+          context.insertion.memoryIds,
+          formatMemories(context.memories),
         )
+      }
+      let compactionContextInserted = false
+      if (pendingCompactionSessions.has(sessionID)) {
+        const summaryIndex = messages.findLastIndex(({ info }) => info.role === "assistant" && info.summary === true)
+        const summary = summaryIndex === -1 ? undefined : messages[summaryIndex]
+        const summaryText = summary ? compactionSummaryText(summary) : undefined
+        if (summary && summaryText && isAutomaticMemoryAnchor(summary)) {
+          const changedMemoryIds = changedMemoryIdsBySession.get(sessionID) ?? []
+          const changedMemories = await engine.memoriesByIds(changedMemoryIds)
+          const excludedIds = new Set([
+            ...changedMemoryIds,
+            ...memoryIdsInText(messageText(messages)),
+            ...insertedMemoryIds(contexts),
+          ])
+          const relevantResults = hasMemories
+            ? await engine.recall(summaryText, "automatic", config.autoRecallLimit, excludedIds)
+            : []
+          const combinedMemories = stableMemories([...changedMemories, ...relevantResults.map(({ memory }) => memory)])
+          if (combinedMemories.length > 0) {
+            const memoryIds = combinedMemories.map((memory) => memory.id)
+            await engine.rememberAutomaticInsertion(sessionID, summary.info.id, memoryIds)
+            compactionContextInserted = insertAutomaticMemoryMessage(
+              output.messages,
+              summaryIndex,
+              summary,
+              memoryIds,
+              formatMemories(combinedMemories),
+            )
+          }
+          pendingCompactionSessions.delete(sessionID)
+          changedMemoryIdsBySession.delete(sessionID)
+        }
+      }
+      const latestUserMessage = messages.findLast(({ info }) => info.role === "user")
+      if (!latestUserMessage) {
+        return
+      }
+      if (!hasMemories || compactionContextInserted) {
+        return
       }
       const query = userMessageText(messages)
       if (query === EMPTY_AUTOMATIC_QUERY) {
@@ -1177,9 +1320,12 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
     event: async ({ event }) => {
       if (event.type === "session.compacted") {
         automaticMessageBySession.delete(event.properties.sessionID)
+        pendingCompactionSessions.add(event.properties.sessionID)
       }
       if (event.type === "session.deleted") {
         automaticMessageBySession.delete(event.properties.info.id)
+        pendingCompactionSessions.delete(event.properties.info.id)
+        changedMemoryIdsBySession.delete(event.properties.info.id)
       }
     },
     config: async (_config: Config) => undefined,

@@ -11,6 +11,10 @@ import {
   LONG_TERM_PROMOTION_SCORE,
   MemoryEngine,
   TOOL_WRITE_DESCRIPTION,
+  automaticMemoryMessage,
+  compactionSummaryText,
+  isAutomaticMemoryAnchor,
+  memoryIdFromContent,
   resolveConfig,
   SEARCH_USE_WEIGHT,
 } from "../dist/index.js"
@@ -247,6 +251,61 @@ test("automatic insertion records survive engine reload", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test("loads memories by ordered IDs and skips missing IDs", async () => {
+  await withEngine(async (engine) => {
+    const first = await engine.remember({ content: "First ordered memory" })
+    const second = await engine.remember({ content: "different second ordered memory" })
+
+    const memories = await engine.memoriesByIds([second.memory.id, "missing", first.memory.id, second.memory.id])
+
+    assert.deepEqual(
+      memories.map((memory) => memory.id),
+      [second.memory.id, first.memory.id, second.memory.id],
+    )
+  })
+})
+
+test("loads no ordered memories when the table is missing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-test-"))
+  const engine = new MemoryEngine(new LanceMemoryStore(join(directory, "memory.lancedb")), new FakeEmbedder())
+
+  try {
+    assert.deepEqual(await engine.memoriesByIds(["missing"]), [])
+  } finally {
+    await engine.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("extracts text from assistant compaction summary messages", () => {
+  const text = compactionSummaryText({
+    info: { role: "assistant", summary: true },
+    parts: [
+      { type: "text", text: "Keep this" },
+      { type: "text", text: "Ignore this", synthetic: true },
+      { type: "text", text: "and this" },
+    ],
+  })
+
+  assert.equal(text, "Keep this\nand this")
+  assert.equal(compactionSummaryText({ info: { role: "assistant" }, parts: [{ type: "text", text: "No" }] }), undefined)
+})
+
+test("automatic memory anchors support assistant summaries", () => {
+  const anchor = {
+    info: { id: "summary-1", sessionID: "session-1", role: "assistant", summary: true, time: { created: 1 } },
+    parts: [],
+  }
+  const memoryIds = ["memory-1", "memory-2"]
+  const message = automaticMemoryMessage(anchor, memoryIdFromContent(memoryIds.join("\n")), "[meem:memory-1] Fact")
+
+  assert.equal(isAutomaticMemoryAnchor(anchor), true)
+  assert.equal(message.info.role, "assistant")
+  assert.equal(message.info.summary, false)
+  assert.equal(message.info.id.startsWith("msg_meem_memory_summary-1_"), true)
+  assert.equal(message.parts[0]?.messageID, message.info.id)
 })
 
 test("remember tool guidance asks for aggressive tiny memories without secrets or raw logs", () => {
