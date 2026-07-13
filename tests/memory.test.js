@@ -10,6 +10,7 @@ import {
   LanceMemoryStore,
   LONG_TERM_PROMOTION_SCORE,
   MemoryEngine,
+  TOOL_WRITE_DESCRIPTION,
   resolveConfig,
   SEARCH_USE_WEIGHT,
 } from "../dist/index.js"
@@ -246,6 +247,13 @@ test("automatic insertion records survive engine reload", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test("remember tool guidance asks for aggressive tiny memories without secrets or raw logs", () => {
+  assert.match(TOOL_WRITE_DESCRIPTION, /Save memories aggressively/)
+  assert.match(TOOL_WRITE_DESCRIPTION, /almost-throwaway detail/)
+  assert.match(TOOL_WRITE_DESCRIPTION, /Do not store secrets/)
+  assert.match(TOOL_WRITE_DESCRIPTION, /raw logs/)
 })
 
 test("store clear removes memories and automatic insertion records", async () => {

@@ -93,7 +93,7 @@ export const LOCAL_MODEL_ERROR_NAME = "LocalModelUnavailableError"
 export const LOCAL_MODEL_UNAVAILABLE_MESSAGE =
   "meem could not download or load its local embedding model. Tell the user that Hugging Face may be unavailable and ask them to retry later, or configure embedding.baseUrl. This memory operation can be retried."
 export const TOOL_WRITE_DESCRIPTION =
-  "Save a tiny fact, preference, decision, correction, or lesson that may help later. Use this often when the user states something reusable or you learn something important."
+  "Save memories aggressively. Store nearly every reusable learning, fact, preference, decision, correction, mistake, failed approach, workaround, project detail, constraint, and even almost-throwaway detail that may help later. Prefer many tiny self-contained memories. Do not store secrets, credentials, private keys, tokens, or raw logs."
 export const TOOL_SEARCH_DESCRIPTION =
   "Search memory for relevant prior facts, preferences, decisions, and lessons. Use this proactively before answering whenever remembered context might help, especially for preferences, prior decisions, recurring tasks, project context, or anything the user may expect you to remember."
 export const TOOL_WRITE_CONTENT_DESCRIPTION = "One self-contained memory, ideally a single short sentence."
