@@ -1,12 +1,16 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import { mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough, Writable } from "node:stream"
+import { promisify } from "node:util"
 import test from "node:test"
 
 import { runCli } from "../dist/cli.js"
 import { LanceMemoryStore, MemoryEngine } from "../dist/index.js"
+
+const execFileAsync = promisify(execFile)
 
 class FakeEmbedder {
   async embed() {
@@ -122,6 +126,21 @@ test("clear asks for confirmation unless --yes is provided", async () => {
     assert.match(stdout.text(), /Clear all meem memories/)
     assert.match(stdout.text(), /Aborted\./)
     assert.equal(stderr.text(), "")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("package binary runs through its symlink", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-cli-test-"))
+  const binary = join(directory, "meem")
+
+  try {
+    await symlink(join(process.cwd(), "dist", "cli.js"), binary)
+    const { stdout, stderr } = await execFileAsync(process.execPath, [binary, "--help"])
+
+    assert.match(stdout, /Usage:/)
+    assert.equal(stderr, "")
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs"
 import { createInterface } from "node:readline/promises"
 import type { Readable, Writable } from "node:stream"
-import { fileURLToPath } from "node:url"
+import { pathToFileURL } from "node:url"
 
 import {
   DAY_MILLISECONDS,
@@ -617,7 +618,7 @@ export const runCli = async (
   return 0
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const exitCode = await runCli()
   process.exit(exitCode)
 }

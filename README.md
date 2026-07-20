@@ -44,9 +44,9 @@ The model can interact with memories by using the tools `meem_remember` and `mee
 
 ## Managing Memories
 
-`meem inspect` provides an interactive view of stored memories, including their tiers and retention state. It can move or delete individual memories.
+`npx -y meem-ai inspect` provides an interactive view of stored memories, including their tiers and retention state. It can move or delete individual memories.
 
-`meem clear` deletes every memory and automatic insertion record after confirmation. Add `--yes` to skip confirmation.
+`npx -y meem-ai clear` deletes every memory and automatic insertion record after confirmation. Add `--yes` to skip confirmation.
 
 ## Defaults
 
