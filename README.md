@@ -42,6 +42,12 @@ Exceptionally relevant short-term memories may also return automatically. A memo
 
 The model can interact with memories by using the tools `meem_remember` and `meem_search`.
 
+## Managing Memories
+
+`meem inspect` provides an interactive view of stored memories, including their tiers and retention state. It can move or delete individual memories.
+
+`meem clear` deletes every memory and automatic insertion record after confirmation. Add `--yes` to skip confirmation.
+
 ## Defaults
 
 All configuration is optional. With only `"plugin": ["meem-ai"]`, meem uses:

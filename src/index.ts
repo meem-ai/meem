@@ -537,6 +537,18 @@ export class LanceMemoryStore {
     return table ? await table.countRows() : 0
   }
 
+  public async listMemories(): Promise<Memory[]> {
+    const table = await this.#memoriesIfExists()
+    if (!table) {
+      return []
+    }
+    const rows = (await table
+      .query()
+      .select(["id", "content", "vector", "tier", "automaticUses", "searchUses", "createdAt", "updatedAt"])
+      .toArray()) as MemoryRow[]
+    return rows.map(memoryFromRow)
+  }
+
   public async searchMemories(
     embedding: number[],
     limit: number,
@@ -634,6 +646,16 @@ export class LanceMemoryStore {
 
   public queueUpdateMemory(memory: Memory): void {
     void this.updateMemory(memory)
+  }
+
+  public async deleteMemory(id: string): Promise<void> {
+    await this.#write(async () => {
+      const table = await this.#memoriesIfExists()
+      if (!table) {
+        return
+      }
+      await table.delete(`id = ${sqlString(id)}`)
+    })
   }
 
   public async deleteExpired(now: number, shortTermMilliseconds: number, longTermMilliseconds: number): Promise<void> {

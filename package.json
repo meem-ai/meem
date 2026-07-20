@@ -35,7 +35,9 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "format": "prettier --write .",
     "test": "npm run build && node --test tests/*.test.js",
-    "start": "npm run build && node ./dist/cli.js"
+    "start": "npm run build && node ./dist/cli.js",
+    "clear": "npm run start -- clear",
+    "inspect": "npm run start -- inspect"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0",
