@@ -69,9 +69,12 @@ test("default retention is one day for short-term and seven days for long-term",
     assert.equal(DEFAULT_LONG_TERM_RETENTION_DAYS, 7)
     assert.equal(config.shortTermRetentionDays, 1)
     assert.equal(config.longTermRetentionDays, 7)
-    assert.equal(config.autoRecallLimit, 4)
-    assert.equal(config.autoPreviousUserMessageLimit, 5)
-    assert.equal(config.tierSimilarityBoost, 0)
+    assert.equal(config.autoRecallLimit, 2)
+    assert.equal(config.autoPreviousUserMessageLimit, 0)
+    assert.equal(config.autoShortSimilarityThreshold, 0.8325)
+    assert.equal(config.autoLongSimilarityThreshold, 0.83)
+    assert.equal(config.autoLifetimeSimilarityThreshold, 0.8275)
+    assert.equal(config.tierSimilarityBoost, 0.005)
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME
@@ -236,7 +239,7 @@ test("recall gives higher tiers a slight similarity ranking boost", async () => 
     async deleteExpired() {},
     queueUpdateMemory() {},
   }
-  const engine = new MemoryEngine(store, new FakeEmbedder(), { tierSimilarityBoost: 0.005 })
+  const engine = new MemoryEngine(store, new FakeEmbedder())
 
   const results = await engine.recall("query", "automatic", 3)
 

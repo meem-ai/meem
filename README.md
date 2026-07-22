@@ -77,8 +77,8 @@ Settings can be added to the plugin entry in `opencode.json`. Every setting show
       "meem-ai",
       {
         "storagePath": "/path/to/memory.lancedb",
-        "autoRecallLimit": 4,
-        "autoPreviousUserMessageLimit": 5,
+        "autoRecallLimit": 2,
+        "autoPreviousUserMessageLimit": 0,
         "searchRecallLimit": 8,
         "shortTermRetentionDays": 30,
         "longTermRetentionDays": 365,
@@ -116,10 +116,10 @@ Recall gates and tier promotion are configurable too. The defaults are balanced 
 ```json
 {
   "searchSimilarityThreshold": 0.42,
-  "autoLifetimeSimilarityThreshold": 0.6,
-  "autoLongSimilarityThreshold": 0.7,
-  "autoShortSimilarityThreshold": 0.8,
-  "tierSimilarityBoost": 0,
+  "autoLifetimeSimilarityThreshold": 0.8275,
+  "autoLongSimilarityThreshold": 0.83,
+  "autoShortSimilarityThreshold": 0.8325,
+  "tierSimilarityBoost": 0.005,
   "deduplicationSimilarityThreshold": 0.965,
   "shortTermPromotionScore": 3,
   "longTermPromotionScore": 8,
