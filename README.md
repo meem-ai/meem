@@ -57,9 +57,11 @@ All configuration is optional. With only `"plugin": ["meem-ai"]`, meem uses:
 - Local English embeddings with `onnx-community/granite-embedding-small-english-r2-ONNX`
 - No API key or remote service
 - Persistent storage at `~/.config/meem/memory.lancedb`
-- Up to four memories per automatic recall
-- Short-term memories expiring after 30 days without being useful
-- Long-term memories expiring after 365 days without being useful
+- Up to two memories per automatic recall
+- Five memories per active search by default, with a maximum of ten
+- Only the latest user message included in automatic recall queries
+- Short-term memories expiring after one day without being useful
+- Long-term memories expiring after seven days without being useful
 - Lifetime memories never expiring
 - A 1536-token embedding chunk size, reduced only if a configured model has a smaller context window
 
@@ -79,9 +81,10 @@ Settings can be added to the plugin entry in `opencode.json`. Every setting show
         "storagePath": "/path/to/memory.lancedb",
         "autoRecallLimit": 2,
         "autoPreviousUserMessageLimit": 0,
-        "searchRecallLimit": 8,
-        "shortTermRetentionDays": 30,
-        "longTermRetentionDays": 365,
+        "searchRecallLimit": 5,
+        "searchRecallMaxLimit": 10,
+        "shortTermRetentionDays": 1,
+        "longTermRetentionDays": 7,
         "embedding": {
           "baseUrl": "http://localhost:11434/v1",
           "apiKeyEnv": "LOCAL_MODEL_API_KEY",
@@ -97,7 +100,8 @@ Settings can be added to the plugin entry in `opencode.json`. Every setting show
 - `storagePath` changes where memories are stored.
 - `autoRecallLimit` changes how many memories can be inserted automatically.
 - `autoPreviousUserMessageLimit` changes how many user messages before the latest are included in automatic recall queries.
-- `searchRecallLimit` changes the default and maximum number of memories returned by active search.
+- `searchRecallLimit` changes the default number of memories returned by active search.
+- `searchRecallMaxLimit` changes the maximum active search limit.
 - `shortTermRetentionDays` changes how long an unused short-term memory remains available.
 - `longTermRetentionDays` changes how long an unused long-term memory remains available.
 - `embedding.baseUrl` switches from the bundled local model to an OpenAI-compatible embeddings endpoint.
@@ -115,7 +119,7 @@ Recall gates and tier promotion are configurable too. The defaults are balanced 
 
 ```json
 {
-  "searchSimilarityThreshold": 0.42,
+  "searchSimilarityThreshold": 0.8,
   "autoLifetimeSimilarityThreshold": 0.8275,
   "autoLongSimilarityThreshold": 0.83,
   "autoShortSimilarityThreshold": 0.8325,
@@ -138,6 +142,7 @@ Environment variables are also optional and override file or OpenCode settings:
 - `MEEM_AUTO_RECALL_LIMIT`
 - `MEEM_AUTO_PREVIOUS_USER_MESSAGE_LIMIT`
 - `MEEM_SEARCH_RECALL_LIMIT`
+- `MEEM_SEARCH_RECALL_MAX_LIMIT`
 - `MEEM_SHORT_TERM_RETENTION_DAYS`
 - `MEEM_LONG_TERM_RETENTION_DAYS`
 - `MEEM_SEARCH_SIMILARITY_THRESHOLD`

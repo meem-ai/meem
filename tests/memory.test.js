@@ -64,6 +64,11 @@ test("default retention is one day for short-term and seven days for long-term",
   try {
     process.env.HOME = directory
     const config = await resolveConfig({ storagePath: join(directory, "memory.lancedb") })
+    const boundedConfig = await resolveConfig({
+      storagePath: join(directory, "bounded-memory.lancedb"),
+      searchRecallLimit: 20,
+      searchRecallMaxLimit: 10,
+    })
 
     assert.equal(DEFAULT_SHORT_TERM_RETENTION_DAYS, 1)
     assert.equal(DEFAULT_LONG_TERM_RETENTION_DAYS, 7)
@@ -71,6 +76,10 @@ test("default retention is one day for short-term and seven days for long-term",
     assert.equal(config.longTermRetentionDays, 7)
     assert.equal(config.autoRecallLimit, 2)
     assert.equal(config.autoPreviousUserMessageLimit, 0)
+    assert.equal(config.searchRecallLimit, 5)
+    assert.equal(config.searchRecallMaxLimit, 10)
+    assert.equal(config.searchSimilarityThreshold, 0.8)
+    assert.equal(boundedConfig.searchRecallLimit, 10)
     assert.equal(config.autoShortSimilarityThreshold, 0.8325)
     assert.equal(config.autoLongSimilarityThreshold, 0.83)
     assert.equal(config.autoLifetimeSimilarityThreshold, 0.8275)

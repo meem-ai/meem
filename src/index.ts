@@ -41,6 +41,7 @@ export const ENV_AUTO_PREVIOUS_USER_MESSAGE_LIMIT = `${ENV_PREFIX}AUTO_PREVIOUS_
 export const ENV_SHORT_TERM_RETENTION_DAYS = `${ENV_PREFIX}SHORT_TERM_RETENTION_DAYS`
 export const ENV_LONG_TERM_RETENTION_DAYS = `${ENV_PREFIX}LONG_TERM_RETENTION_DAYS`
 export const ENV_SEARCH_RECALL_LIMIT = `${ENV_PREFIX}SEARCH_RECALL_LIMIT`
+export const ENV_SEARCH_RECALL_MAX_LIMIT = `${ENV_PREFIX}SEARCH_RECALL_MAX_LIMIT`
 export const ENV_SEARCH_SIMILARITY_THRESHOLD = `${ENV_PREFIX}SEARCH_SIMILARITY_THRESHOLD`
 export const ENV_AUTO_LIFETIME_SIMILARITY_THRESHOLD = `${ENV_PREFIX}AUTO_LIFETIME_SIMILARITY_THRESHOLD`
 export const ENV_AUTO_LONG_SIMILARITY_THRESHOLD = `${ENV_PREFIX}AUTO_LONG_SIMILARITY_THRESHOLD`
@@ -61,8 +62,9 @@ export const DEFAULT_AUTO_PREVIOUS_USER_MESSAGE_LIMIT = 0
 export const DEFAULT_SHORT_TERM_RETENTION_DAYS = 1
 export const DEFAULT_LONG_TERM_RETENTION_DAYS = 7
 export const DAY_MILLISECONDS = 86_400_000
-export const DEFAULT_SEARCH_LIMIT = 8
-export const MIN_SEARCH_SIMILARITY = 0.42
+export const DEFAULT_SEARCH_LIMIT = 5
+export const DEFAULT_SEARCH_MAX_LIMIT = 10
+export const MIN_SEARCH_SIMILARITY = 0.8
 export const MIN_AUTO_LIFETIME_SIMILARITY = 0.8275
 export const MIN_AUTO_LONG_SIMILARITY = 0.83
 export const MIN_AUTO_SHORT_SIMILARITY = 0.8325
@@ -218,6 +220,7 @@ export interface MeemConfig {
   autoRecallLimit?: number
   autoPreviousUserMessageLimit?: number
   searchRecallLimit?: number
+  searchRecallMaxLimit?: number
   shortTermRetentionDays?: number
   longTermRetentionDays?: number
   searchSimilarityThreshold?: number
@@ -244,6 +247,7 @@ export interface ResolvedMeemConfig {
   autoRecallLimit: number
   autoPreviousUserMessageLimit: number
   searchRecallLimit: number
+  searchRecallMaxLimit: number
   shortTermRetentionDays: number
   longTermRetentionDays: number
   searchSimilarityThreshold: number
@@ -405,6 +409,7 @@ const mergeConfig = (base: MeemConfig, override: MeemConfig): MeemConfig => ({
   autoRecallLimit: override.autoRecallLimit ?? base.autoRecallLimit,
   autoPreviousUserMessageLimit: override.autoPreviousUserMessageLimit ?? base.autoPreviousUserMessageLimit,
   searchRecallLimit: override.searchRecallLimit ?? base.searchRecallLimit,
+  searchRecallMaxLimit: override.searchRecallMaxLimit ?? base.searchRecallMaxLimit,
   shortTermRetentionDays: override.shortTermRetentionDays ?? base.shortTermRetentionDays,
   longTermRetentionDays: override.longTermRetentionDays ?? base.longTermRetentionDays,
   searchSimilarityThreshold: override.searchSimilarityThreshold ?? base.searchSimilarityThreshold,
@@ -435,6 +440,7 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
     autoRecallLimit: parsePositiveInteger(process.env[ENV_AUTO_RECALL_LIMIT]),
     autoPreviousUserMessageLimit: parseNonNegativeInteger(process.env[ENV_AUTO_PREVIOUS_USER_MESSAGE_LIMIT]),
     searchRecallLimit: parsePositiveInteger(process.env[ENV_SEARCH_RECALL_LIMIT]),
+    searchRecallMaxLimit: parsePositiveInteger(process.env[ENV_SEARCH_RECALL_MAX_LIMIT]),
     shortTermRetentionDays: parsePositiveInteger(process.env[ENV_SHORT_TERM_RETENTION_DAYS]),
     longTermRetentionDays: parsePositiveInteger(process.env[ENV_LONG_TERM_RETENTION_DAYS]),
     searchSimilarityThreshold: parseNonNegativeNumber(process.env[ENV_SEARCH_SIMILARITY_THRESHOLD]),
@@ -459,6 +465,7 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
   const contextSize = merged.embedding?.contextSize ?? DEFAULT_EMBEDDING_CONTEXT_SIZE
   const chunkSize = Math.min(DEFAULT_EMBEDDING_CHUNK_SIZE, Math.max(1, contextSize - CONTEXT_TOKEN_RESERVE))
   const apiKeyEnvironment = merged.embedding?.apiKeyEnv ?? DEFAULT_API_KEY_ENV
+  const searchRecallMaxLimit = positiveIntegerOrDefault(merged.searchRecallMaxLimit, DEFAULT_SEARCH_MAX_LIMIT)
   if (merged.embedding?.baseUrl && !merged.embedding.model) {
     throw new Error(`${CONFIG_ERROR_PREFIX}: ${REMOTE_MODEL_REQUIRED_ERROR}`)
   }
@@ -477,7 +484,11 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
       merged.autoPreviousUserMessageLimit,
       DEFAULT_AUTO_PREVIOUS_USER_MESSAGE_LIMIT,
     ),
-    searchRecallLimit: positiveIntegerOrDefault(merged.searchRecallLimit, DEFAULT_SEARCH_LIMIT),
+    searchRecallLimit: Math.min(
+      positiveIntegerOrDefault(merged.searchRecallLimit, DEFAULT_SEARCH_LIMIT),
+      searchRecallMaxLimit,
+    ),
+    searchRecallMaxLimit,
     shortTermRetentionDays: positiveOrDefault(merged.shortTermRetentionDays, DEFAULT_SHORT_TERM_RETENTION_DAYS),
     longTermRetentionDays: positiveOrDefault(merged.longTermRetentionDays, DEFAULT_LONG_TERM_RETENTION_DAYS),
     searchSimilarityThreshold: thresholdOrDefault(merged.searchSimilarityThreshold, MIN_SEARCH_SIMILARITY),
@@ -1319,7 +1330,7 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
             .number()
             .int()
             .min(1)
-            .max(config.searchRecallLimit)
+            .max(config.searchRecallMaxLimit)
             .optional()
             .describe(TOOL_SEARCH_LIMIT_DESCRIPTION),
         },
