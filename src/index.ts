@@ -23,7 +23,6 @@ export const LOCAL_EMBEDDING_MODEL = "onnx-community/granite-embedding-small-eng
 export const LOCAL_QUERY_PREFIX = ""
 export const LOCAL_DOCUMENT_PREFIX = ""
 export const LOCAL_ACCELERATED_DEVICE = "webgpu"
-export const LOCAL_CPU_DEVICE = "wasm"
 export const BUN_RUNTIME_GLOBAL = "Bun"
 export const EMBEDDINGS_PATH = "embeddings"
 export const CONTENT_TYPE_HEADER = "Content-Type"
@@ -867,10 +866,10 @@ export class LocalEmbedder implements Embedder {
           try {
             encoder = await AutoModel.from_pretrained(this.#model, { dtype: "fp32", device: LOCAL_ACCELERATED_DEVICE })
           } catch {
-            encoder = await AutoModel.from_pretrained(this.#model, { dtype: "q8", device: LOCAL_CPU_DEVICE })
+            encoder = await AutoModel.from_pretrained(this.#model, { dtype: "q8" })
           }
         } else {
-          encoder = await AutoModel.from_pretrained(this.#model, { dtype: "q8", device: LOCAL_CPU_DEVICE })
+          encoder = await AutoModel.from_pretrained(this.#model, { dtype: "q8" })
         }
         this.#tokenizer = tokenizer
         this.#encoder = encoder
