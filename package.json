@@ -37,7 +37,12 @@
     "test": "npm run build && node --test tests/*.test.js",
     "start": "npm run build && node ./dist/cli.js",
     "clear": "npm run start -- clear",
-    "inspect": "npm run start -- inspect"
+    "inspect": "npm run start -- inspect",
+    "list": "npm run start -- list",
+    "view": "npm run start -- view",
+    "promote": "npm run start -- promote",
+    "demote": "npm run start -- demote",
+    "delete": "npm run start -- delete"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0",

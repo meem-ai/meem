@@ -46,6 +46,8 @@ The model can interact with memories by using the tools `meem_remember` and `mee
 
 `npx -y meem-ai inspect` provides an interactive view of stored memories, including their tiers and retention state. It can move or delete individual memories.
 
+For scripts and agents, use `meem list` for a compact table or add `--json` for structured output. It defaults to newest first and accepts `--limit`, `--sort createdAt:asc`, `--filter text`, and `--tier short|long|lifetime`. Use `meem view <id>` for one complete memory, and `meem promote <id>`, `meem demote <id>`, or `meem delete <id>` for individual changes. Deletion asks for confirmation unless passed `--yes`.
+
 `npx -y meem-ai clear` deletes every memory and automatic insertion record after confirmation. Add `--yes` to skip confirmation.
 
 ## Defaults

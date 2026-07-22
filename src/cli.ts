@@ -16,13 +16,24 @@ import {
 export const CLI_USAGE = `Usage:
   meem clear [--yes]
   meem inspect
+  meem list [--limit number] [--sort field[:asc|desc]] [--filter text] [--tier tier] [--json]
+  meem view <id> [--json]
+  meem promote <id>
+  meem demote <id>
+  meem delete <id> [--yes]
 
 Commands:
   clear    Delete all meem memories and automatic insertion records.
   inspect  Interactively view, clear, upgrade, or downgrade memories.
+  list     List memories, newest first by default.
+  view     View one memory.
+  promote  Move a memory to the next retention tier.
+  demote   Move a memory to the previous retention tier.
+  delete   Delete one memory.
 
 Options:
   --yes    Skip confirmation.
+  --json   Output JSON for list or view.
   --help   Show this help.`
 
 export interface CliStreams {
@@ -45,10 +56,93 @@ const confirmClear = async ({ stdin, stdout }: Pick<CliStreams, "stdin" | "stdou
   }
 }
 
+const confirmDelete = async ({ stdin, stdout }: Pick<CliStreams, "stdin" | "stdout">, id: string): Promise<boolean> => {
+  const readline = createInterface({ input: stdin, output: stdout })
+  try {
+    const answer = await readline.question(`Delete ${id}? [y/N] `)
+    return ["y", "yes"].includes(answer.trim().toLowerCase())
+  } finally {
+    readline.close()
+  }
+}
+
 type TerminalInput = Readable & { isTTY?: boolean; setRawMode?: (mode: boolean) => void }
 type TerminalOutput = Writable & { columns?: number; isTTY?: boolean; rows?: number }
 
 const MEMORY_TIERS: readonly MemoryTier[] = ["short", "long", "lifetime"]
+
+interface ListOptions {
+  filter?: string
+  json: boolean
+  limit?: number
+  sort: "createdAt" | "id" | "updatedAt"
+  sortDescending: boolean
+  tier?: MemoryTier
+}
+
+type ListedMemory = Omit<Memory, "embedding">
+
+const parseListOptions = (args: string[]): ListOptions | string => {
+  const options: ListOptions = { json: false, sort: "createdAt", sortDescending: true }
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    const value = args[index + 1]
+    if (argument === "--json") {
+      options.json = true
+    } else if (argument === "--limit") {
+      const limit = Number(value)
+      if (!Number.isSafeInteger(limit) || limit <= 0) {
+        return "--limit must be a positive integer"
+      }
+      options.limit = limit
+      index += 1
+    } else if (argument === "--filter") {
+      if (!value) {
+        return "--filter requires text"
+      }
+      options.filter = value
+      index += 1
+    } else if (argument === "--tier") {
+      if (!MEMORY_TIERS.includes(value as MemoryTier)) {
+        return "--tier must be short, long, or lifetime"
+      }
+      options.tier = value as MemoryTier
+      index += 1
+    } else if (argument === "--sort") {
+      const [field, direction] = value?.split(":") ?? []
+      if (field !== "createdAt" && field !== "updatedAt" && field !== "id") {
+        return "--sort must be createdAt, updatedAt, or id"
+      }
+      if (direction !== undefined && direction !== "asc" && direction !== "desc") {
+        return "--sort direction must be asc or desc"
+      }
+      options.sort = field
+      options.sortDescending = direction ? direction === "desc" : field !== "id"
+      index += 1
+    } else {
+      return `Unsupported flag for list: ${argument}`
+    }
+  }
+  return options
+}
+
+const listMemories = (memories: Memory[], options: ListOptions): ListedMemory[] => {
+  const filter = options.filter?.toLocaleLowerCase()
+  return memories
+    .filter((memory) => !options.tier || memory.tier === options.tier)
+    .filter(
+      (memory) =>
+        !filter ||
+        memory.id.toLocaleLowerCase().includes(filter) ||
+        memory.content.toLocaleLowerCase().includes(filter),
+    )
+    .sort((left, right) => {
+      const comparison = left[options.sort].localeCompare(right[options.sort]) || left.id.localeCompare(right.id)
+      return options.sortDescending ? -comparison : comparison
+    })
+    .slice(0, options.limit)
+    .map(({ embedding: _embedding, ...memory }) => memory)
+}
 const ESCAPE_SEQUENCES = new Map([
   ["\u001b[A", "up"],
   ["\u001b[B", "down"],
@@ -109,6 +203,40 @@ const clipped = (value: string, width: number): string => {
   }
   return `${value.slice(0, width - 3)}...`
 }
+
+const formatMemoryTable = (memories: ListedMemory[]): string => {
+  if (memories.length === 0) {
+    return "No memories."
+  }
+  const rows = memories.map((memory) => [
+    memory.id,
+    memory.tier,
+    `${memory.automaticUses}/${memory.searchUses}`,
+    memory.createdAt.slice(0, 10),
+    clipped(memory.content.replaceAll(/\s+/g, " "), 64).trimEnd(),
+  ])
+  const widths = [36, 8, Math.max(3, ...rows.map((row) => row[2]?.length ?? 0)), 10]
+  return [["ID", "TIER", "A/S", "CREATED", "MEMORY"], ...rows]
+    .map((row) =>
+      row
+        .map((value, index) => (index < widths.length ? value?.padEnd(widths[index] ?? 0) : value))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n")
+}
+
+const formatMemory = (memory: ListedMemory): string =>
+  [
+    `id       ${memory.id}`,
+    `tier     ${memory.tier}`,
+    `uses     ${memory.automaticUses} automatic / ${memory.searchUses} search`,
+    `created  ${memory.createdAt}`,
+    `updated  ${memory.updatedAt}`,
+    "",
+    "content",
+    memory.content,
+  ].join("\n")
 
 const elapsedDuration = (milliseconds: number): string => {
   const minutes = Math.floor(milliseconds / 60_000)
@@ -583,18 +711,16 @@ export const runCli = async (
   }
 
   const [command, ...flags] = args
-  if (command !== "clear" && command !== "inspect") {
+  if (!command || !["clear", "inspect", "list", "view", "promote", "demote", "delete"].includes(command)) {
     write(streams.stderr, `Unsupported command: ${command ?? ""}\n${CLI_USAGE}\n`)
     return 1
   }
 
-  const unsupportedFlag = flags.find((flag) => command !== "clear" || flag !== "--yes")
-  if (unsupportedFlag) {
-    write(streams.stderr, `Unsupported flag for ${command}: ${unsupportedFlag}\n${CLI_USAGE}\n`)
-    return 1
-  }
-
   if (command === "inspect") {
+    if (flags.length > 0) {
+      write(streams.stderr, `Unsupported flag for inspect: ${flags[0]}\n${CLI_USAGE}\n`)
+      return 1
+    }
     const config = await resolveConfig()
     const store = new LanceMemoryStore(config.storagePath)
     try {
@@ -604,18 +730,119 @@ export const runCli = async (
     }
   }
 
-  const confirmed = flags.includes("--yes") || (await confirmClear(streams))
-  if (!confirmed) {
+  if (command === "clear") {
+    const unsupportedFlag = flags.find((flag) => flag !== "--yes")
+    if (unsupportedFlag) {
+      write(streams.stderr, `Unsupported flag for clear: ${unsupportedFlag}\n${CLI_USAGE}\n`)
+      return 1
+    }
+    const confirmed = flags.includes("--yes") || (await confirmClear(streams))
+    if (!confirmed) {
+      write(streams.stdout, "Aborted.\n")
+      return 0
+    }
+
+    const config = await resolveConfig()
+    const store = new LanceMemoryStore(config.storagePath)
+    try {
+      await store.clear()
+    } finally {
+      await store.close()
+    }
+    write(streams.stdout, `Cleared meem storage at ${config.storagePath}.\n`)
+    return 0
+  }
+
+  if (command === "list") {
+    const options = parseListOptions(flags)
+    if (typeof options === "string") {
+      write(streams.stderr, `${options}\n${CLI_USAGE}\n`)
+      return 1
+    }
+    const config = await resolveConfig()
+    const store = new LanceMemoryStore(config.storagePath)
+    try {
+      const memories = listMemories(await store.listMemories(), options)
+      write(streams.stdout, `${options.json ? JSON.stringify(memories) : formatMemoryTable(memories)}\n`)
+      return 0
+    } finally {
+      await store.close()
+    }
+  }
+
+  if (command === "view") {
+    const [id, ...viewFlags] = flags
+    if (!id || id.startsWith("--") || viewFlags.some((flag) => flag !== "--json")) {
+      write(streams.stderr, `view requires a memory id and optionally --json\n${CLI_USAGE}\n`)
+      return 1
+    }
+    const config = await resolveConfig()
+    const store = new LanceMemoryStore(config.storagePath)
+    try {
+      const [memory] = await store.memoriesByIds([id])
+      if (!memory) {
+        write(streams.stderr, `not found ${id}\n`)
+        return 1
+      }
+      const { embedding: _embedding, ...listedMemory } = memory
+      write(
+        streams.stdout,
+        `${viewFlags.includes("--json") ? JSON.stringify(listedMemory) : formatMemory(listedMemory)}\n`,
+      )
+      return 0
+    } finally {
+      await store.close()
+    }
+  }
+
+  const [id, ...operationFlags] = flags
+  if (!id || id.startsWith("--") || (command !== "delete" && operationFlags.length > 0)) {
+    write(streams.stderr, `${command} requires a memory id\n${CLI_USAGE}\n`)
+    return 1
+  }
+  if (command === "delete" && operationFlags.some((flag) => flag !== "--yes")) {
+    write(
+      streams.stderr,
+      `Unsupported flag for delete: ${operationFlags.find((flag) => flag !== "--yes")}\n${CLI_USAGE}\n`,
+    )
+    return 1
+  }
+  if (command === "delete" && !operationFlags.includes("--yes") && !(await confirmDelete(streams, id))) {
     write(streams.stdout, "Aborted.\n")
     return 0
   }
 
   const config = await resolveConfig()
   const store = new LanceMemoryStore(config.storagePath)
-  await store.clear()
-  await store.close()
-  write(streams.stdout, `Cleared meem storage at ${config.storagePath}.\n`)
-  return 0
+  try {
+    const [memory] = await store.memoriesByIds([id])
+    if (!memory) {
+      write(streams.stderr, `not found ${id}\n`)
+      return 1
+    }
+    if (command === "delete") {
+      await store.deleteMemory(id)
+      write(streams.stdout, `deleted ${id}\n`)
+      return 0
+    }
+
+    const tier = command === "promote" ? nextTier(memory.tier) : previousTier(memory.tier)
+    if (tier === memory.tier) {
+      write(streams.stdout, `already ${id} ${tier}\n`)
+      return 0
+    }
+    await store.updateMemory({
+      ...memory,
+      tier,
+      automaticUses: 0,
+      searchUses: 0,
+      updatedAt: new Date().toISOString(),
+    })
+    write(streams.stdout, `${command}d ${id} ${tier}\n`)
+    return 0
+  } finally {
+    await store.close()
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

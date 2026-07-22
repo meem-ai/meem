@@ -131,6 +131,143 @@ test("clear asks for confirmation unless --yes is provided", async () => {
   }
 })
 
+test("machine commands list, view, move, and delete memories", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "meem-cli-test-"))
+  const storagePath = join(directory, "memory.lancedb")
+  const store = new LanceMemoryStore(storagePath)
+
+  try {
+    await store.addMemory({
+      id: "newest",
+      content: "Keep the newest short memory",
+      embedding: [1, 0, 0],
+      tier: "short",
+      automaticUses: 2,
+      searchUses: 1,
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    })
+    await store.addMemory({
+      id: "older",
+      content: "Older long memory",
+      embedding: [0, 1, 0],
+      tier: "long",
+      automaticUses: 5,
+      searchUses: 4,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    })
+    await store.close()
+
+    await withStoragePath(storagePath, async () => {
+      const listOutput = new CaptureStream()
+      assert.equal(
+        await runCli(["list", "--json"], {
+          stdin: new PassThrough(),
+          stdout: listOutput,
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+      assert.deepEqual(
+        JSON.parse(listOutput.text()).map((memory) => memory.id),
+        ["newest", "older"],
+      )
+
+      const filteredOutput = new CaptureStream()
+      assert.equal(
+        await runCli(["list", "--tier", "long", "--filter", "older", "--limit", "1", "--json"], {
+          stdin: new PassThrough(),
+          stdout: filteredOutput,
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+      assert.deepEqual(
+        JSON.parse(filteredOutput.text()).map((memory) => memory.id),
+        ["older"],
+      )
+
+      const tableOutput = new CaptureStream()
+      assert.equal(
+        await runCli(["list", "--limit", "1"], {
+          stdin: new PassThrough(),
+          stdout: tableOutput,
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+      assert.match(tableOutput.text(), /ID\s+TIER\s+A\/S\s+CREATED\s+MEMORY/)
+      assert.match(tableOutput.text(), /newest\s+short\s+2\/1\s+2026-01-02\s+Keep the newest short memory/)
+
+      const viewOutput = new CaptureStream()
+      assert.equal(
+        await runCli(["view", "older"], {
+          stdin: new PassThrough(),
+          stdout: viewOutput,
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+      assert.match(viewOutput.text(), /id\s+older/)
+      assert.match(viewOutput.text(), /uses\s+5 automatic \/ 4 search/)
+      assert.match(viewOutput.text(), /Older long memory/)
+      assert.doesNotMatch(viewOutput.text(), /embedding/)
+
+      assert.equal(
+        await runCli(["promote", "newest"], {
+          stdin: new PassThrough(),
+          stdout: new CaptureStream(),
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+      assert.equal(
+        await runCli(["demote", "older"], {
+          stdin: new PassThrough(),
+          stdout: new CaptureStream(),
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+
+      const deleteInput = new PassThrough()
+      const deleteOutput = new CaptureStream()
+      const pendingDelete = runCli(["delete", "newest"], {
+        stdin: deleteInput,
+        stdout: deleteOutput,
+        stderr: new CaptureStream(),
+      })
+      deleteInput.end("n\n")
+      assert.equal(await pendingDelete, 0)
+      assert.match(deleteOutput.text(), /Delete newest/)
+      assert.match(deleteOutput.text(), /Aborted\./)
+      assert.equal(
+        await runCli(["delete", "newest", "--yes"], {
+          stdin: new PassThrough(),
+          stdout: new CaptureStream(),
+          stderr: new CaptureStream(),
+        }),
+        0,
+      )
+    })
+
+    const reopened = new LanceMemoryStore(storagePath)
+    assert.deepEqual(
+      (await reopened.listMemories()).map((memory) => [
+        memory.id,
+        memory.tier,
+        memory.automaticUses,
+        memory.searchUses,
+      ]),
+      [["older", "short", 0, 0]],
+    )
+    await reopened.close()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("package binary runs through its symlink", async () => {
   const directory = await mkdtemp(join(tmpdir(), "meem-cli-test-"))
   const binary = join(directory, "meem")
