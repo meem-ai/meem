@@ -119,6 +119,7 @@ Recall gates and tier promotion are configurable too. The defaults are balanced 
   "autoLifetimeSimilarityThreshold": 0.6,
   "autoLongSimilarityThreshold": 0.7,
   "autoShortSimilarityThreshold": 0.8,
+  "tierSimilarityBoost": 0,
   "deduplicationSimilarityThreshold": 0.965,
   "shortTermPromotionScore": 3,
   "longTermPromotionScore": 8,
@@ -127,7 +128,7 @@ Recall gates and tier promotion are configurable too. The defaults are balanced 
 }
 ```
 
-Similarity thresholds range from `0` to `1`. Lower recall thresholds surface more memories. Promotion scores determine when memories move up a tier, while the use weights make active search reinforce a memory more strongly than automatic recall.
+Similarity thresholds range from `0` to `1`. Lower recall thresholds surface more memories. `tierSimilarityBoost` affects ranking only: long-term memories receive one boost and lifetime memories receive two, while every result must still pass its unmodified similarity threshold. Promotion scores determine when memories move up a tier, while the use weights make active search reinforce a memory more strongly than automatic recall.
 
 ## Optional Environment Variables
 
@@ -143,6 +144,7 @@ Environment variables are also optional and override file or OpenCode settings:
 - `MEEM_AUTO_LIFETIME_SIMILARITY_THRESHOLD`
 - `MEEM_AUTO_LONG_SIMILARITY_THRESHOLD`
 - `MEEM_AUTO_SHORT_SIMILARITY_THRESHOLD`
+- `MEEM_TIER_SIMILARITY_BOOST`
 - `MEEM_DEDUPLICATION_SIMILARITY_THRESHOLD`
 - `MEEM_SHORT_TERM_PROMOTION_SCORE`
 - `MEEM_LONG_TERM_PROMOTION_SCORE`

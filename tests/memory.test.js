@@ -71,6 +71,7 @@ test("default retention is one day for short-term and seven days for long-term",
     assert.equal(config.longTermRetentionDays, 7)
     assert.equal(config.autoRecallLimit, 4)
     assert.equal(config.autoPreviousUserMessageLimit, 5)
+    assert.equal(config.tierSimilarityBoost, 0)
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME
@@ -211,6 +212,38 @@ test("automatic recall applies tier-specific thresholds", async () => {
     assert.equal((await engine.recall("different query", "automatic", 1)).length, 1)
     assert.equal((await engine.recall("lifetime query", "automatic", 1)).length, 1)
   })
+})
+
+test("recall gives higher tiers a slight similarity ranking boost", async () => {
+  const memory = (id, tier) => ({
+    id,
+    content: id,
+    embedding: [1, 0, 0],
+    tier,
+    automaticUses: 0,
+    searchUses: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  })
+  const store = {
+    async searchMemories() {
+      return [
+        { memory: memory("short", "short"), similarity: 0.84 },
+        { memory: memory("long", "long"), similarity: 0.837 },
+        { memory: memory("lifetime", "lifetime"), similarity: 0.833 },
+      ]
+    },
+    async deleteExpired() {},
+    queueUpdateMemory() {},
+  }
+  const engine = new MemoryEngine(store, new FakeEmbedder(), { tierSimilarityBoost: 0.005 })
+
+  const results = await engine.recall("query", "automatic", 3)
+
+  assert.deepEqual(
+    results.map(({ memory: result }) => result.id),
+    ["lifetime", "long", "short"],
+  )
 })
 
 test("parallel memory writes and searches are safe", async () => {

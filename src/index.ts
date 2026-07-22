@@ -45,6 +45,7 @@ export const ENV_SEARCH_SIMILARITY_THRESHOLD = `${ENV_PREFIX}SEARCH_SIMILARITY_T
 export const ENV_AUTO_LIFETIME_SIMILARITY_THRESHOLD = `${ENV_PREFIX}AUTO_LIFETIME_SIMILARITY_THRESHOLD`
 export const ENV_AUTO_LONG_SIMILARITY_THRESHOLD = `${ENV_PREFIX}AUTO_LONG_SIMILARITY_THRESHOLD`
 export const ENV_AUTO_SHORT_SIMILARITY_THRESHOLD = `${ENV_PREFIX}AUTO_SHORT_SIMILARITY_THRESHOLD`
+export const ENV_TIER_SIMILARITY_BOOST = `${ENV_PREFIX}TIER_SIMILARITY_BOOST`
 export const ENV_DEDUPLICATION_SIMILARITY_THRESHOLD = `${ENV_PREFIX}DEDUPLICATION_SIMILARITY_THRESHOLD`
 export const ENV_SHORT_TERM_PROMOTION_SCORE = `${ENV_PREFIX}SHORT_TERM_PROMOTION_SCORE`
 export const ENV_LONG_TERM_PROMOTION_SCORE = `${ENV_PREFIX}LONG_TERM_PROMOTION_SCORE`
@@ -65,6 +66,7 @@ export const MIN_SEARCH_SIMILARITY = 0.42
 export const MIN_AUTO_LIFETIME_SIMILARITY = 0.6
 export const MIN_AUTO_LONG_SIMILARITY = 0.7
 export const MIN_AUTO_SHORT_SIMILARITY = 0.8
+export const TIER_SIMILARITY_BOOST = 0
 export const DEDUPLICATION_SIMILARITY = 0.965
 export const SHORT_TERM_PROMOTION_SCORE = 3
 export const LONG_TERM_PROMOTION_SCORE = 8
@@ -222,6 +224,7 @@ export interface MeemConfig {
   autoLifetimeSimilarityThreshold?: number
   autoLongSimilarityThreshold?: number
   autoShortSimilarityThreshold?: number
+  tierSimilarityBoost?: number
   deduplicationSimilarityThreshold?: number
   shortTermPromotionScore?: number
   longTermPromotionScore?: number
@@ -247,6 +250,7 @@ export interface ResolvedMeemConfig {
   autoLifetimeSimilarityThreshold: number
   autoLongSimilarityThreshold: number
   autoShortSimilarityThreshold: number
+  tierSimilarityBoost: number
   deduplicationSimilarityThreshold: number
   shortTermPromotionScore: number
   longTermPromotionScore: number
@@ -261,6 +265,7 @@ export interface MemoryPolicy {
   autoLifetimeSimilarityThreshold: number
   autoLongSimilarityThreshold: number
   autoShortSimilarityThreshold: number
+  tierSimilarityBoost: number
   deduplicationSimilarityThreshold: number
   shortTermPromotionScore: number
   longTermPromotionScore: number
@@ -406,6 +411,7 @@ const mergeConfig = (base: MeemConfig, override: MeemConfig): MeemConfig => ({
   autoLifetimeSimilarityThreshold: override.autoLifetimeSimilarityThreshold ?? base.autoLifetimeSimilarityThreshold,
   autoLongSimilarityThreshold: override.autoLongSimilarityThreshold ?? base.autoLongSimilarityThreshold,
   autoShortSimilarityThreshold: override.autoShortSimilarityThreshold ?? base.autoShortSimilarityThreshold,
+  tierSimilarityBoost: override.tierSimilarityBoost ?? base.tierSimilarityBoost,
   deduplicationSimilarityThreshold: override.deduplicationSimilarityThreshold ?? base.deduplicationSimilarityThreshold,
   shortTermPromotionScore: override.shortTermPromotionScore ?? base.shortTermPromotionScore,
   longTermPromotionScore: override.longTermPromotionScore ?? base.longTermPromotionScore,
@@ -435,6 +441,7 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
     autoLifetimeSimilarityThreshold: parseNonNegativeNumber(process.env[ENV_AUTO_LIFETIME_SIMILARITY_THRESHOLD]),
     autoLongSimilarityThreshold: parseNonNegativeNumber(process.env[ENV_AUTO_LONG_SIMILARITY_THRESHOLD]),
     autoShortSimilarityThreshold: parseNonNegativeNumber(process.env[ENV_AUTO_SHORT_SIMILARITY_THRESHOLD]),
+    tierSimilarityBoost: parseNonNegativeNumber(process.env[ENV_TIER_SIMILARITY_BOOST]),
     deduplicationSimilarityThreshold: parseNonNegativeNumber(process.env[ENV_DEDUPLICATION_SIMILARITY_THRESHOLD]),
     shortTermPromotionScore: parsePositiveNumber(process.env[ENV_SHORT_TERM_PROMOTION_SCORE]),
     longTermPromotionScore: parsePositiveNumber(process.env[ENV_LONG_TERM_PROMOTION_SCORE]),
@@ -480,6 +487,7 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
     ),
     autoLongSimilarityThreshold: thresholdOrDefault(merged.autoLongSimilarityThreshold, MIN_AUTO_LONG_SIMILARITY),
     autoShortSimilarityThreshold: thresholdOrDefault(merged.autoShortSimilarityThreshold, MIN_AUTO_SHORT_SIMILARITY),
+    tierSimilarityBoost: thresholdOrDefault(merged.tierSimilarityBoost, TIER_SIMILARITY_BOOST),
     deduplicationSimilarityThreshold: thresholdOrDefault(
       merged.deduplicationSimilarityThreshold,
       DEDUPLICATION_SIMILARITY,
@@ -942,6 +950,7 @@ export class MemoryEngine {
       autoLifetimeSimilarityThreshold: MIN_AUTO_LIFETIME_SIMILARITY,
       autoLongSimilarityThreshold: MIN_AUTO_LONG_SIMILARITY,
       autoShortSimilarityThreshold: MIN_AUTO_SHORT_SIMILARITY,
+      tierSimilarityBoost: TIER_SIMILARITY_BOOST,
       deduplicationSimilarityThreshold: DEDUPLICATION_SIMILARITY,
       shortTermPromotionScore: SHORT_TERM_PROMOTION_SCORE,
       longTermPromotionScore: LONG_TERM_PROMOTION_SCORE,
@@ -1035,6 +1044,7 @@ export class MemoryEngine {
     const [queryEmbedding] = await Promise.all([this.#embedder.embed(query, "query"), this.#pruneExpired()])
     const results = (await this.#store.searchMemories(queryEmbedding, limit, excludedIds))
       .filter((result: RecallResult) => this.#passesGate(result, mechanism))
+      .sort((left, right) => this.#rankedSimilarity(right) - this.#rankedSimilarity(left))
       .slice(0, limit)
     for (const { memory } of results) {
       this.#recordUse(memory, mechanism)
@@ -1053,6 +1063,11 @@ export class MemoryEngine {
       return result.similarity >= this.#policy.autoLifetimeSimilarityThreshold
     }
     return result.similarity >= this.#policy.autoLongSimilarityThreshold
+  }
+
+  #rankedSimilarity(result: RecallResult): number {
+    const tierSteps = result.memory.tier === "lifetime" ? 2 : result.memory.tier === "long" ? 1 : 0
+    return result.similarity + tierSteps * this.#policy.tierSimilarityBoost
   }
 
   #recordUse(memory: Memory, mechanism: RecallMechanism): void {
@@ -1264,6 +1279,7 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
     autoLifetimeSimilarityThreshold: config.autoLifetimeSimilarityThreshold,
     autoLongSimilarityThreshold: config.autoLongSimilarityThreshold,
     autoShortSimilarityThreshold: config.autoShortSimilarityThreshold,
+    tierSimilarityBoost: config.tierSimilarityBoost,
     deduplicationSimilarityThreshold: config.deduplicationSimilarityThreshold,
     shortTermPromotionScore: config.shortTermPromotionScore,
     longTermPromotionScore: config.longTermPromotionScore,
