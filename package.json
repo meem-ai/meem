@@ -1,6 +1,6 @@
 {
   "name": "meem-ai",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Human-like memory for AI agents, implemented as an OpenCode plugin",
   "author": {
     "name": "Linus Schlumberger",
