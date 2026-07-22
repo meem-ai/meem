@@ -37,6 +37,7 @@ export const ENV_EMBEDDING_API_KEY_ENV = `${ENV_PREFIX}EMBEDDING_API_KEY_ENV`
 export const ENV_EMBEDDING_MODEL = `${ENV_PREFIX}EMBEDDING_MODEL`
 export const ENV_EMBEDDING_CONTEXT_SIZE = `${ENV_PREFIX}EMBEDDING_CONTEXT_SIZE`
 export const ENV_AUTO_RECALL_LIMIT = `${ENV_PREFIX}AUTO_RECALL_LIMIT`
+export const ENV_AUTO_PREVIOUS_USER_MESSAGE_LIMIT = `${ENV_PREFIX}AUTO_PREVIOUS_USER_MESSAGE_LIMIT`
 export const ENV_SHORT_TERM_RETENTION_DAYS = `${ENV_PREFIX}SHORT_TERM_RETENTION_DAYS`
 export const ENV_LONG_TERM_RETENTION_DAYS = `${ENV_PREFIX}LONG_TERM_RETENTION_DAYS`
 export const ENV_SEARCH_RECALL_LIMIT = `${ENV_PREFIX}SEARCH_RECALL_LIMIT`
@@ -55,6 +56,7 @@ export const DEFAULT_EMBEDDING_CHUNK_SIZE = 1536
 export const TOKEN_CHARACTER_ESTIMATE = 4
 export const CONTEXT_TOKEN_RESERVE = 32
 export const DEFAULT_AUTO_RECALL_LIMIT = 4
+export const DEFAULT_AUTO_PREVIOUS_USER_MESSAGE_LIMIT = 5
 export const DEFAULT_SHORT_TERM_RETENTION_DAYS = 1
 export const DEFAULT_LONG_TERM_RETENTION_DAYS = 7
 export const DAY_MILLISECONDS = 86_400_000
@@ -212,6 +214,7 @@ export interface MeemConfig {
   storagePath?: string
   embedding?: EmbeddingConfig
   autoRecallLimit?: number
+  autoPreviousUserMessageLimit?: number
   searchRecallLimit?: number
   shortTermRetentionDays?: number
   longTermRetentionDays?: number
@@ -236,6 +239,7 @@ export interface ResolvedMeemConfig {
     chunkSize: number
   }
   autoRecallLimit: number
+  autoPreviousUserMessageLimit: number
   searchRecallLimit: number
   shortTermRetentionDays: number
   longTermRetentionDays: number
@@ -303,6 +307,15 @@ const parsePositiveInteger = (value: string | undefined): number | undefined => 
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
+const parseNonNegativeInteger = (value: string | undefined): number | undefined => {
+  if (!value) {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
 const parsePositiveNumber = (value: string | undefined): number | undefined => {
   if (!value) {
     return undefined
@@ -324,6 +337,9 @@ const positiveOrDefault = (value: number | undefined, defaultValue: number): num
 
 const positiveIntegerOrDefault = (value: number | undefined, defaultValue: number): number =>
   value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : defaultValue
+
+const nonNegativeIntegerOrDefault = (value: number | undefined, defaultValue: number): number =>
+  value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : defaultValue
 
 const thresholdOrDefault = (value: number | undefined, defaultValue: number): number =>
   value !== undefined && Number.isFinite(value) ? clamp(value, MIN_THRESHOLD, MAX_THRESHOLD) : defaultValue
@@ -382,6 +398,7 @@ const readJsonConfig = async (path: string): Promise<MeemConfig> => {
 const mergeConfig = (base: MeemConfig, override: MeemConfig): MeemConfig => ({
   storagePath: override.storagePath ?? base.storagePath,
   autoRecallLimit: override.autoRecallLimit ?? base.autoRecallLimit,
+  autoPreviousUserMessageLimit: override.autoPreviousUserMessageLimit ?? base.autoPreviousUserMessageLimit,
   searchRecallLimit: override.searchRecallLimit ?? base.searchRecallLimit,
   shortTermRetentionDays: override.shortTermRetentionDays ?? base.shortTermRetentionDays,
   longTermRetentionDays: override.longTermRetentionDays ?? base.longTermRetentionDays,
@@ -410,6 +427,7 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
   const environmentConfig: MeemConfig = {
     storagePath: process.env[ENV_STORAGE_PATH],
     autoRecallLimit: parsePositiveInteger(process.env[ENV_AUTO_RECALL_LIMIT]),
+    autoPreviousUserMessageLimit: parseNonNegativeInteger(process.env[ENV_AUTO_PREVIOUS_USER_MESSAGE_LIMIT]),
     searchRecallLimit: parsePositiveInteger(process.env[ENV_SEARCH_RECALL_LIMIT]),
     shortTermRetentionDays: parsePositiveInteger(process.env[ENV_SHORT_TERM_RETENTION_DAYS]),
     longTermRetentionDays: parsePositiveInteger(process.env[ENV_LONG_TERM_RETENTION_DAYS]),
@@ -448,6 +466,10 @@ export const resolveConfig = async (options: PluginOptions = {}): Promise<Resolv
       chunkSize,
     },
     autoRecallLimit: positiveIntegerOrDefault(merged.autoRecallLimit, DEFAULT_AUTO_RECALL_LIMIT),
+    autoPreviousUserMessageLimit: nonNegativeIntegerOrDefault(
+      merged.autoPreviousUserMessageLimit,
+      DEFAULT_AUTO_PREVIOUS_USER_MESSAGE_LIMIT,
+    ),
     searchRecallLimit: positiveIntegerOrDefault(merged.searchRecallLimit, DEFAULT_SEARCH_LIMIT),
     shortTermRetentionDays: positiveOrDefault(merged.shortTermRetentionDays, DEFAULT_SHORT_TERM_RETENTION_DAYS),
     longTermRetentionDays: positiveOrDefault(merged.longTermRetentionDays, DEFAULT_LONG_TERM_RETENTION_DAYS),
@@ -1061,9 +1083,12 @@ const memoryMarker = (id: string): string => `${MEMORY_MARKER_PREFIX}${id}${MEMO
 const formatResults = (results: RecallResult[]): string =>
   results.map(({ memory }) => `${memoryMarker(memory.id)} ${memory.content}`).join("\n")
 
-const messageText = (messages: { parts: { type: string; text?: string; synthetic?: boolean }[] }[]): string =>
+const messageText = (
+  messages: { parts: { type: string; text?: string; synthetic?: boolean }[] }[],
+  limit = RECENT_MESSAGE_LIMIT,
+): string =>
   messages
-    .slice(-RECENT_MESSAGE_LIMIT)
+    .slice(-limit)
     .flatMap(({ parts }) =>
       parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text ?? ""),
     )
@@ -1072,7 +1097,12 @@ const messageText = (messages: { parts: { type: string; text?: string; synthetic
 
 const userMessageText = (
   messages: { info: { role: string }; parts: { type: string; text?: string; synthetic?: boolean }[] }[],
-): string => messageText(messages.filter(({ info }) => info.role === "user"))
+  previousMessageLimit: number,
+): string =>
+  messageText(
+    messages.filter(({ info }) => info.role === "user"),
+    previousMessageLimit + 1,
+  )
 
 type UserMessageWithParts = {
   info: {
@@ -1353,7 +1383,7 @@ export const MeemPlugin: Plugin = async ({ client }, options = {}) => {
       if (!hasMemories || compactionContextInserted) {
         return
       }
-      const query = userMessageText(messages)
+      const query = userMessageText(messages, config.autoPreviousUserMessageLimit)
       if (query === EMPTY_AUTOMATIC_QUERY) {
         return
       }

@@ -69,6 +69,8 @@ test("default retention is one day for short-term and seven days for long-term",
     assert.equal(DEFAULT_LONG_TERM_RETENTION_DAYS, 7)
     assert.equal(config.shortTermRetentionDays, 1)
     assert.equal(config.longTermRetentionDays, 7)
+    assert.equal(config.autoRecallLimit, 4)
+    assert.equal(config.autoPreviousUserMessageLimit, 5)
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME

@@ -78,6 +78,7 @@ Settings can be added to the plugin entry in `opencode.json`. Every setting show
       {
         "storagePath": "/path/to/memory.lancedb",
         "autoRecallLimit": 4,
+        "autoPreviousUserMessageLimit": 5,
         "searchRecallLimit": 8,
         "shortTermRetentionDays": 30,
         "longTermRetentionDays": 365,
@@ -95,6 +96,7 @@ Settings can be added to the plugin entry in `opencode.json`. Every setting show
 
 - `storagePath` changes where memories are stored.
 - `autoRecallLimit` changes how many memories can be inserted automatically.
+- `autoPreviousUserMessageLimit` changes how many user messages before the latest are included in automatic recall queries.
 - `searchRecallLimit` changes the default and maximum number of memories returned by active search.
 - `shortTermRetentionDays` changes how long an unused short-term memory remains available.
 - `longTermRetentionDays` changes how long an unused long-term memory remains available.
@@ -133,6 +135,7 @@ Environment variables are also optional and override file or OpenCode settings:
 
 - `MEEM_STORAGE_PATH`
 - `MEEM_AUTO_RECALL_LIMIT`
+- `MEEM_AUTO_PREVIOUS_USER_MESSAGE_LIMIT`
 - `MEEM_SEARCH_RECALL_LIMIT`
 - `MEEM_SHORT_TERM_RETENTION_DAYS`
 - `MEEM_LONG_TERM_RETENTION_DAYS`
